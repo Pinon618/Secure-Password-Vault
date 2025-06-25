@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zero-Knowledge Password Manager with Gemini AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .transition-all { transition: all 0.3s ease-in-out; }
+        .modal-bg { background-color: rgba(0,0,0,0.5); }
+        .modal-content {
+            animation: slide-up 0.3s ease-out;
+        }
+        @keyframes slide-up {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        .gemini-spinner {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="app" class="min-h-screen flex flex-col items-center justify-center p-4">
+
+        <!-- Loading Spinner -->
+        <div id="loading" class="hidden">
+            <svg class="animate-spin h-10 w-10 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+
+        <!-- Auth View (Create/Login) -->
+        <div id="auth-view" class="w-full max-w-md hidden">
+            <div class="bg-white rounded-xl shadow-2xl p-8">
+                <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Secure Vault</h1>
+                <p class="text-center text-gray-500 mb-6" id="auth-subtitle">Enter your master password to unlock.</p>
+                <form id="auth-form">
+                    <div class="mb-4">
+                        <label for="master-password" class="sr-only">Master Password</label>
+                        <input type="password" id="master-password" placeholder="Master Password" class="w-full px-4 py-3 bg-gray-100 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:bg-white focus:ring-0 transition-all" required>
+                    </div>
+                    <div id="confirm-password-container" class="mb-6 hidden">
+                        <label for="confirm-password" class="sr-only">Confirm Master Password</label>
+                        <input type="password" id="confirm-password" placeholder="Confirm Master Password" class="w-full px-4 py-3 bg-gray-100 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:bg-white focus:ring-0 transition-all">
+                    </div>
+                    <button id="auth-button" type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all shadow-lg">Unlock Vault</button>
+                </form>
+                 <div id="auth-error" class="mt-4 text-center text-red-500 font-medium hidden"></div>
+                 <p class="text-xs text-center text-gray-400 mt-6">Your User ID (for sharing/recovery): <br><strong id="user-id-display" class="select-all"></strong></p>
+            </div>
+             <p class="text-center text-gray-400 mt-4 text-xs">This is a zero-knowledge password manager. Your master password is never stored.</p>
+        </div>
+
+        <!-- Main App View (Vault) -->
+        <div id="main-view" class="w-full max-w-4xl hidden">
+            <div class="bg-white rounded-xl shadow-2xl overflow-hidden">
+                <header class="p-6 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                    <h1 class="text-2xl font-bold text-gray-800">My Vault</h1>
+                    <div class="flex items-center space-x-2">
+                        <button id="security-tip-btn" class="bg-purple-100 text-purple-700 font-bold py-2 px-4 rounded-lg hover:bg-purple-200 transition-all shadow-sm">✨ Security Tip</button>
+                        <button id="add-password-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-all shadow-md">Add New</button>
+                        <button id="logout-btn" class="bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition-all">Logout</button>
+                    </div>
+                </header>
+                <div class="p-6 custom-scrollbar" style="max-height: 60vh; overflow-y: auto;">
+                    <div id="password-list">
+                        <!-- Password items will be injected here -->
+                    </div>
+                    <div id="empty-state" class="text-center py-16 hidden">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                            <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-medium text-gray-900">No passwords</h3>
+                        <p class="mt-1 text-sm text-gray-500">Get started by adding a new password.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add/Edit Password Modal -->
+        <div id="modal" class="fixed inset-0 modal-bg items-center justify-center hidden">
+            <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md modal-content">
+                <h2 id="modal-title" class="text-2xl font-bold mb-6">Add New Password</h2>
+                <form id="modal-form">
+                    <input type="hidden" id="modal-entry-id">
+                    <div class="mb-4">
+                        <label for="modal-website" class="block text-sm font-medium text-gray-700 mb-1">Website</label>
+                        <input type="text" id="modal-website" class="w-full px-4 py-2 bg-gray-100 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:bg-white focus:ring-0 transition-all" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="modal-username" class="block text-sm font-medium text-gray-700 mb-1">Username/Email</label>
+                        <input type="text" id="modal-username" class="w-full px-4 py-2 bg-gray-100 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:bg-white focus:ring-0 transition-all" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="modal-password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <div class="relative">
+                            <input type="password" id="modal-password" class="w-full px-4 py-2 bg-gray-100 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:bg-white focus:ring-0 transition-all" required>
+                            <button type="button" id="generate-password-btn" class="absolute inset-y-0 right-0 px-3 text-sm font-semibold text-indigo-600 hover:text-indigo-800">Generate</button>
+                        </div>
+                    </div>
+                     <div class="mb-4">
+                        <button type="button" id="analyze-password-btn" class="w-full bg-teal-100 text-teal-800 text-sm font-bold py-2 px-4 rounded-lg hover:bg-teal-200 transition-all">✨ Analyze Strength</button>
+                        <div id="password-analysis-result" class="mt-2 text-sm p-3 bg-gray-50 rounded-lg hidden"></div>
+                     </div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" id="modal-cancel-btn" class="bg-gray-200 text-gray-700 font-bold py-2 px-6 rounded-lg hover:bg-gray-300 transition-all">Cancel</button>
+                        <button type="submit" id="modal-save-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700 transition-all shadow-md">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Security Tip Modal -->
+        <div id="security-tip-modal" class="fixed inset-0 modal-bg items-center justify-center hidden">
+            <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md modal-content">
+                <div class="flex justify-between items-start">
+                    <h2 class="text-2xl font-bold mb-4 text-purple-800">✨ Daily Security Tip</h2>
+                     <button id="security-tip-close-btn" class="text-gray-400 hover:text-gray-600">&times;</button>
+                </div>
+                <div id="security-tip-content" class="text-gray-600 min-h-[100px]"></div>
+            </div>
+        </div>
+
+
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- DOM Elements ---
+        const $ = (selector) => document.querySelector(selector);
+        const app = {
+            loading: $('#loading'),
+            authView: $('#auth-view'),
+            mainView: $('#main-view'),
+            authForm: $('#auth-form'),
+            authButton: $('#auth-button'),
+            authSubtitle: $('#auth-subtitle'),
+            authError: $('#auth-error'),
+            masterPasswordInput: $('#master-password'),
+            confirmPasswordContainer: $('#confirm-password-container'),
+            confirmPasswordInput: $('#confirm-password'),
+            passwordList: $('#password-list'),
+            emptyState: $('#empty-state'),
+            addPasswordBtn: $('#add-password-btn'),
+            logoutBtn: $('#logout-btn'),
+            userIdDisplay: $('#user-id-display'),
+            modal: $('#modal'),
+            modalTitle: $('#modal-title'),
+            modalForm: $('#modal-form'),
+            modalEntryId: $('#modal-entry-id'),
+            modalWebsite: $('#modal-website'),
+            modalUsername: $('#modal-username'),
+            modalPassword: $('#modal-password'),
+            generatePasswordBtn: $('#generate-password-btn'),
+            analyzePasswordBtn: $('#analyze-password-btn'),
+            passwordAnalysisResult: $('#password-analysis-result'),
+            modalCancelBtn: $('#modal-cancel-btn'),
+            modalSaveBtn: $('#modal-save-btn'),
+            securityTipBtn: $('#security-tip-btn'),
+            securityTipModal: $('#security-tip-modal'),
+            securityTipContent: $('#security-tip-content'),
+            securityTipCloseBtn: $('#security-tip-close-btn'),
+        };
+
+        // --- State ---
+        let db, auth;
+        let userId = null;
+        let encryptionKey = null;
+        let vaultData = [];
+        let isNewUser = false;
+        let vaultUnsubscribe = null;
+
+        // --- Gemini API Helper ---
+        const gemini = {
+            call: async (prompt, isJson = false) => {
+                const apiKey = ""; // Leave blank, handled by environment
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
+                const payload = {
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                };
+
+                if (isJson) {
+                    payload.generationConfig = {
+                        responseMimeType: "application/json",
+                    }
+                }
+
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API call failed with status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    
+                    if (result.candidates && result.candidates.length > 0) {
+                        return result.candidates[0].content.parts[0].text;
+                    }
+                    throw new Error("No content returned from API.");
+
+                } catch (error) {
+                    console.error("Gemini API call failed:", error);
+                    return null;
+                }
+            }
+        };
+
+        // --- Cryptography Helpers ---
+        // These functions implement the core zero-knowledge logic.
+        const cryptoUtils = {
+            // Convert ArrayBuffer to Base64 string
+            bufferToBase64: (buffer) => btoa(String.fromCharCode(...new Uint8Array(buffer))),
+            // Convert Base64 string to ArrayBuffer
+            base64ToBuffer: (base64) => Uint8Array.from(atob(base64), c => c.charCodeAt(0)),
+
+            // Derive a 256-bit key from a password and salt using PBKDF2
+            deriveKey: (password, salt) => {
+                const passwordBuffer = new TextEncoder().encode(password);
+                return window.crypto.subtle.importKey(
+                    'raw',
+                    passwordBuffer,
+                    { name: 'PBKDF2' },
+                    false,
+                    ['deriveKey']
+                ).then(baseKey => window.crypto.subtle.deriveKey(
+                    {
+                        name: 'PBKDF2',
+                        salt: salt,
+                        iterations: 250000,
+                        hash: 'SHA-256'
+                    },
+                    baseKey,
+                    { name: 'AES-GCM', length: 256 },
+                    true,
+                    ['encrypt', 'decrypt']
+                ));
+            },
+
+            // Encrypt data using the derived key
+            encrypt: async (key, data) => {
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                const encodedData = new TextEncoder().encode(JSON.stringify(data));
+                const encryptedData = await window.crypto.subtle.encrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    key,
+                    encodedData
+                );
+                return {
+                    iv: cryptoUtils.bufferToBase64(iv),
+                    data: cryptoUtils.bufferToBase64(encryptedData)
+                };
+            },
+
+            // Decrypt data using the derived key
+            decrypt: async (key, iv, data) => {
+                try {
+                    const ivBuffer = cryptoUtils.base64ToBuffer(iv);
+                    const dataBuffer = cryptoUtils.base64ToBuffer(data);
+                    const decryptedBuffer = await window.crypto.subtle.decrypt(
+                        { name: 'AES-GCM', iv: ivBuffer },
+                        key,
+                        dataBuffer
+                    );
+                    const decryptedString = new TextDecoder().decode(decryptedBuffer);
+                    return JSON.parse(decryptedString);
+                } catch (e) {
+                    console.error("Decryption failed:", e);
+                    throw new Error("Invalid master password or corrupted data.");
+                }
+            },
+
+            // Generate a secure random password
+            generatePassword: (length = 16) => {
+                const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+~`|}{[]:;?><,./-=';
+                let password = '';
+                const randomValues = new Uint32Array(length);
+                window.crypto.getRandomValues(randomValues);
+                for (let i = 0; i < length; i++) {
+                    password += charset[randomValues[i] % charset.length];
+                }
+                return password;
+            }
+        };
+
+        // --- UI Logic ---
+        const ui = {
+            showView: (view) => {
+                app.loading.classList.add('hidden');
+                app.authView.classList.add('hidden');
+                app.mainView.classList.add('hidden');
+                view.classList.remove('hidden');
+            },
+            showLoading: () => {
+                app.loading.classList.remove('hidden');
+                app.authView.classList.add('hidden');
+                app.mainView.classList.add('hidden');
+            },
+            renderPasswordList: () => {
+                app.passwordList.innerHTML = '';
+                if (vaultData.length === 0) {
+                    app.emptyState.classList.remove('hidden');
+                    return;
+                }
+                app.emptyState.classList.add('hidden');
+                
+                const sortedData = [...vaultData].sort((a,b) => a.website.localeCompare(b.website));
+
+                sortedData.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center justify-between p-4 border-b border-gray-100 hover:bg-gray-50';
+                    div.innerHTML = `
+                        <div class="flex items-center space-x-4">
+                            <div class="flex-shrink-0 h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-lg">
+                                ${item.website.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                                <p class="font-semibold text-gray-800">${item.website}</p>
+                                <p class="text-sm text-gray-500">${item.username}</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                             <div class="relative">
+                                <input type="password" value="${item.password}" class="w-48 p-2 rounded-md bg-gray-100 border-transparent" readonly>
+                                <button class="toggle-visibility absolute inset-y-0 right-0 px-3 text-gray-500 hover:text-gray-700">
+                                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                </button>
+                            </div>
+                            <button class="copy-btn p-2 rounded-md hover:bg-gray-200" data-value="${item.password}" title="Copy password">
+                                 <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            </button>
+                            <button class="edit-btn p-2 rounded-md hover:bg-gray-200" data-id="${item.id}" title="Edit">
+                                <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.586a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button class="delete-btn p-2 rounded-md hover:bg-gray-200" data-id="${item.id}" title="Delete">
+                               <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    `;
+                    app.passwordList.appendChild(div);
+                });
+            },
+            showAuthError: (message) => {
+                app.authError.textContent = message;
+                app.authError.classList.remove('hidden');
+                app.masterPasswordInput.classList.add('border-red-500');
+                setTimeout(() => {
+                    app.authError.classList.add('hidden');
+                    app.masterPasswordInput.classList.remove('border-red-500');
+                }, 3000);
+            },
+            setupAuthView: (isNew) => {
+                isNewUser = isNew;
+                app.authSubtitle.textContent = isNew ? 'Create a strong master password to secure your new vault.' : 'Enter your master password to unlock.';
+                app.authButton.textContent = isNew ? 'Create Vault' : 'Unlock Vault';
+                app.confirmPasswordContainer.classList.toggle('hidden', !isNew);
+                app.confirmPasswordInput.required = isNew;
+                ui.showView(app.authView);
+            },
+            showModal: (entry = null) => {
+                app.modalForm.reset();
+                app.passwordAnalysisResult.classList.add('hidden');
+                if (entry) {
+                    app.modalTitle.textContent = 'Edit Password';
+                    app.modalEntryId.value = entry.id;
+                    app.modalWebsite.value = entry.website;
+                    app.modalUsername.value = entry.username;
+                    app.modalPassword.value = entry.password;
+                } else {
+                    app.modalTitle.textContent = 'Add New Password';
+                    app.modalEntryId.value = '';
+                }
+                app.modal.classList.add('flex');
+                app.modal.classList.remove('hidden');
+            },
+            hideModal: () => {
+                app.modal.classList.add('hidden');
+                app.modal.classList.remove('flex');
+            },
+            showSecurityTipModal: () => {
+                app.securityTipModal.classList.add('flex');
+                app.securityTipModal.classList.remove('hidden');
+            },
+            hideSecurityTipModal: () => {
+                app.securityTipModal.classList.add('hidden');
+                app.securityTipModal.classList.remove('flex');
+            }
+        };
+
+        // --- Data Logic ---
+        const data = {
+            getVaultRef: () => {
+                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-password-manager';
+                 return doc(db, "artifacts", appId, "users", userId);
+            },
+            saveVault: async () => {
+                if (!encryptionKey) throw new Error("Not logged in.");
+                ui.showLoading();
+                try {
+                    const encryptedPayload = await cryptoUtils.encrypt(encryptionKey, vaultData);
+                    const docRef = data.getVaultRef();
+                    const docSnap = await getDoc(docRef);
+                    const vaultToSave = {
+                        ...docSnap.data(), // Preserve salt
+                        ...encryptedPayload,
+                    };
+                    await setDoc(docRef, vaultToSave);
+                } catch (e) {
+                    console.error("Error saving vault:", e);
+                    alert("Could not save vault. Please check console for errors.");
+                } finally {
+                   ui.showView(app.mainView);
+                }
+            },
+            addEntry: async (entry) => {
+                entry.id = uuid.v4();
+                vaultData.push(entry);
+                await data.saveVault();
+                ui.renderPasswordList();
+            },
+            updateEntry: async (updatedEntry) => {
+                const index = vaultData.findIndex(e => e.id === updatedEntry.id);
+                if (index > -1) {
+                    vaultData[index] = updatedEntry;
+                    await data.saveVault();
+                    ui.renderPasswordList();
+                }
+            },
+            deleteEntry: async (id) => {
+                vaultData = vaultData.filter(e => e.id !== id);
+                await data.saveVault();
+                ui.renderPasswordList();
+            }
+        };
+
+        // --- Event Handlers ---
+        const handlers = {
+            handleAuthFormSubmit: async (e) => {
+                e.preventDefault();
+                ui.showLoading();
+                const password = app.masterPasswordInput.value;
+
+                if (isNewUser) {
+                    if (password.length < 12) {
+                        ui.setupAuthView(true);
+                        ui.showAuthError("Password must be at least 12 characters.");
+                        return;
+                    }
+                    if (password !== app.confirmPasswordInput.value) {
+                        ui.setupAuthView(true);
+                        ui.showAuthError("Passwords do not match.");
+                        return;
+                    }
+                    const salt = window.crypto.getRandomValues(new Uint8Array(16));
+                    encryptionKey = await cryptoUtils.deriveKey(password, salt);
+                    vaultData = [];
+
+                    try {
+                        const encryptedPayload = await cryptoUtils.encrypt(encryptionKey, vaultData);
+                        const vaultToSave = {
+                             ...encryptedPayload,
+                             salt: cryptoUtils.bufferToBase64(salt)
+                        };
+                        await setDoc(data.getVaultRef(), vaultToSave);
+                        ui.renderPasswordList();
+                        ui.showView(app.mainView);
+                    } catch (err) {
+                        console.error("Error creating vault:", err);
+                        ui.setupAuthView(true);
+                        ui.showAuthError("Could not create vault.");
+                    }
+                } else {
+                    try {
+                        const docSnap = await getDoc(data.getVaultRef());
+                        const remoteVault = docSnap.data();
+                        const salt = cryptoUtils.base64ToBuffer(remoteVault.salt);
+                        encryptionKey = await cryptoUtils.deriveKey(password, salt);
+                        vaultData = await cryptoUtils.decrypt(encryptionKey, remoteVault.iv, remoteVault.data);
+                        ui.renderPasswordList();
+                        ui.showView(app.mainView);
+                    } catch (err) {
+                        console.error(err);
+                        encryptionKey = null;
+                        ui.setupAuthView(false);
+                        ui.showAuthError("Invalid master password.");
+                    }
+                }
+                app.authForm.reset();
+            },
+            handleLogout: () => {
+                encryptionKey = null;
+                vaultData = [];
+                app.passwordList.innerHTML = '';
+                ui.setupAuthView(isNewUser);
+            },
+            handlePasswordListClick: (e) => {
+                const target = e.target.closest('button');
+                if (!target) return;
+                
+                if (target.classList.contains('copy-btn')) {
+                    const value = target.dataset.value;
+                    // Use document.execCommand for broader iframe compatibility
+                    const textarea = document.createElement('textarea');
+                    textarea.value = value;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    try {
+                        document.execCommand('copy');
+                        const originalTitle = target.title;
+                        target.title = 'Copied!';
+                        setTimeout(() => { target.title = originalTitle; }, 2000);
+                    } catch (err) {
+                        console.error('Fallback: Oops, unable to copy', err);
+                    }
+                    document.body.removeChild(textarea);
+
+                } else if (target.classList.contains('edit-btn')) {
+                    const entry = vaultData.find(item => item.id === target.dataset.id);
+                    if (entry) ui.showModal(entry);
+                } else if (target.classList.contains('delete-btn')) {
+                    if (confirm('Are you sure you want to delete this entry?')) {
+                        data.deleteEntry(target.dataset.id);
+                    }
+                } else if (target.classList.contains('toggle-visibility')) {
+                    const input = target.previousElementSibling;
+                    const isPassword = input.type === 'password';
+                    input.type = isPassword ? 'text' : 'password';
+                    target.innerHTML = isPassword 
+                        ? `<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.05 10.05 0 01-4.132 5.411m0 0L21 21"></path></svg>`
+                        : `<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>`;
+                }
+            },
+            handleModalFormSubmit: (e) => {
+                e.preventDefault();
+                const entry = {
+                    id: app.modalEntryId.value,
+                    website: app.modalWebsite.value.trim(),
+                    username: app.modalUsername.value.trim(),
+                    password: app.modalPassword.value.trim(),
+                };
+                if (entry.id) {
+                    data.updateEntry(entry);
+                } else {
+                    data.addEntry(entry);
+                }
+                ui.hideModal();
+            },
+            handleAnalyzePassword: async () => {
+                const password = app.modalPassword.value;
+                if (!password) {
+                    app.passwordAnalysisResult.innerHTML = '<p class="text-red-500">Please enter a password to analyze.</p>';
+                    app.passwordAnalysisResult.classList.remove('hidden');
+                    return;
+                }
+
+                app.passwordAnalysisResult.innerHTML = `<div class="flex items-center"><svg class="gemini-spinner h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="4" stroke="currentColor" class="opacity-25"></circle><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" class="opacity-75"></path></svg> Analyzing...</div>`;
+                app.passwordAnalysisResult.classList.remove('hidden');
+
+                const prompt = `Analyze the strength of the password "${password}". Provide a JSON object with the following keys: "strength" (string: "Very Weak", "Weak", "Moderate", "Strong", or "Very Strong"), "suggestions" (an array of strings with tips to improve it), and "feedback" (a short, one-sentence summary).`;
+                const resultText = await gemini.call(prompt, true);
+                
+                if (resultText) {
+                    try {
+                        const result = JSON.parse(resultText);
+                        let colorClass = 'text-gray-700';
+                        if (result.strength.includes("Strong")) colorClass = 'text-green-600';
+                        if (result.strength.includes("Moderate")) colorClass = 'text-yellow-600';
+                        if (result.strength.includes("Weak")) colorClass = 'text-red-600';
+
+                        let suggestionsHTML = '<ul>';
+                        result.suggestions.forEach(s => {
+                            suggestionsHTML += `<li class="list-disc list-inside ml-2">${s}</li>`;
+                        });
+                        suggestionsHTML += '</ul>';
+
+                        app.passwordAnalysisResult.innerHTML = `
+                            <p><strong class="font-semibold">Strength:</strong> <span class="${colorClass}">${result.strength}</span></p>
+                            <p class="mt-1"><strong class="font-semibold">Feedback:</strong> ${result.feedback}</p>
+                            <div class="mt-2"><strong class="font-semibold">Suggestions:</strong>${suggestionsHTML}</div>
+                        `;
+                    } catch (e) {
+                         app.passwordAnalysisResult.innerHTML = '<p class="text-red-500">Could not parse analysis.</p>';
+                    }
+                } else {
+                    app.passwordAnalysisResult.innerHTML = '<p class="text-red-500">Analysis failed. Please try again.</p>';
+                }
+            },
+            handleSecurityTip: async () => {
+                ui.showSecurityTipModal();
+                app.securityTipContent.innerHTML = `<div class="flex items-center justify-center h-full"><svg class="gemini-spinner h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="4" stroke="currentColor" class="opacity-25"></circle><path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" class="opacity-75"></path></svg></div>`;
+                
+                const prompt = "Give me a concise, useful, and actionable cybersecurity tip for a user of a password manager. The tip should be easy to understand for a non-technical person. Provide only the tip, without any extra conversational text.";
+                const tip = await gemini.call(prompt);
+                
+                if (tip) {
+                    app.securityTipContent.innerHTML = `<p>${tip}</p>`;
+                } else {
+                    app.securityTipContent.innerHTML = `<p class="text-red-500">Could not fetch a tip right now. Please try again later.</p>`;
+                }
+            }
+        };
+
+        // --- Initialization ---
+        const init = async () => {
+            ui.showLoading();
+            const firebaseConfig = {
+                apiKey: "AIzaSyAjsBMgxeBbAgtKE88pMo5WEsC-44WxUlA",
+                authDomain: "my--password-vault.firebaseapp.com",
+                projectId: "my--password-vault",
+                storageBucket: "my--password-vault.firebasestorage.app",
+                messagingSenderId: "675484376170",
+                appId: "1:675484376170:web:68f75d2035fb0a90effe13"
+            };
+
+            const firebaseApp = initializeApp(firebaseConfig);
+            db = getFirestore(firebaseApp);
+            auth = getAuth(firebaseApp);
+            
+            onAuthStateChanged(auth, async user => {
+                if (user) {
+                    userId = user.uid;
+                    app.userIdDisplay.textContent = userId;
+                    
+                    if (vaultUnsubscribe) vaultUnsubscribe();
+                    
+                    vaultUnsubscribe = onSnapshot(data.getVaultRef(), (docSnap) => {
+                        if (encryptionKey) return;
+
+                        if (docSnap.exists() && docSnap.data().salt) {
+                            isNewUser = false;
+                            ui.setupAuthView(false);
+                        } else {
+                            isNewUser = true;
+                            ui.setupAuthView(true);
+                        }
+                    }, (error) => {
+                        console.error("Firestore snapshot error:", error);
+                        alert("Error connecting to the vault. Please refresh and try again.");
+                    });
+                } else {
+                    userId = null;
+                    if (vaultUnsubscribe) vaultUnsubscribe();
+                    ui.showLoading();
+                }
+            });
+
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                document.body.innerHTML = `<div class="p-4 text-center text-red-500">Could not authenticate with the service. Please refresh the page.</div>`;
+            }
+        };
+
+        // Bind Events
+        app.authForm.addEventListener('submit', handlers.handleAuthFormSubmit);
+        app.logoutBtn.addEventListener('click', handlers.handleLogout);
+        app.addPasswordBtn.addEventListener('click', () => ui.showModal());
+        app.passwordList.addEventListener('click', handlers.handlePasswordListClick);
+        app.modalCancelBtn.addEventListener('click', ui.hideModal);
+        app.modalForm.addEventListener('submit', handlers.handleModalFormSubmit);
+        app.generatePasswordBtn.addEventListener('click', () => {
+            app.modalPassword.value = cryptoUtils.generatePassword();
+        });
+        app.analyzePasswordBtn.addEventListener('click', handlers.handleAnalyzePassword);
+        app.securityTipBtn.addEventListener('click', handlers.handleSecurityTip);
+        app.securityTipCloseBtn.addEventListener('click', ui.hideSecurityTipModal);
+
+
+        // Start the app
+        init();
+    </script>
+</body>
+</html>
